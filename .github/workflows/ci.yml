@@ -47,7 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage-report
+          name: coverage-report-${{ matrix.python-version }}
           path: coverage.xml
 
   dep-audit:
@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rhysd/actionlint@v1
+      - uses: rhysd/actionlint@v1.7.11
 
   sbom:
     name: SBOM Generation
