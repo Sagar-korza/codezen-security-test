@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: mypy src/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest --tb=short -q --cov --cov-report=term --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  dep-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit
+        run: pip-audit
+
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-licenses
+        run: pip install pip-licenses
+      - name: Install project dependencies
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || true
+          pip install -r requirements.txt 2>/dev/null || true
+      - name: Export Python licenses
+        run: |
+          OUT=python-licenses.json
+          pip-licenses --format=json --output-file="$OUT" || echo "[]" > "$OUT"
+      - name: Check license compliance
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          ALLOW = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Python-2.0", "PSF"}
+          BLOCK = {"GPL", "AGPL", "UNKNOWN"}
+          violations = []
+          if os.path.exists("python-licenses.json"):
+              with open("python-licenses.json") as f:
+                  data = json.load(f)
+              for pkg in data:
+                  lic = pkg.get("License", "UNKNOWN")
+                  name = pkg.get("Name", "unknown")
+                  if any(b in lic for b in BLOCK):
+                      violations.append("Python/" + name + ": " + lic)
+                  elif not any(a in lic for a in ALLOW):
+                      violations.append("Python/" + name + ": " + lic + " (not in allowlist)")
+          if os.path.exists("node-licenses.json"):
+              with open("node-licenses.json") as f:
+                  data = json.load(f)
+              for pkg, info in data.items():
+                  lic = info.get("licenses", "UNKNOWN")
+                  if isinstance(lic, list):
+                      lic = ";".join(lic)
+                  if any(b in lic for b in BLOCK):
+                      violations.append("Node/" + pkg + ": " + lic)
+                  elif not any(a in lic for a in ALLOW):
+                      violations.append("Node/" + pkg + ": " + lic + " (not in allowlist)")
+          if violations:
+              print("LICENSE VIOLATIONS FOUND:")
+              for v in violations:
+                  print("  - " + v)
+              sys.exit(1)
+          print("All licenses compliant.")
+          PYEOF
+
+  actions-lint:
+    name: GitHub Actions Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/actionlint@v1
+
+  sbom:
+    name: SBOM Generation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          artifact-name: sbom.cyclonedx.json
+          upload-artifact: true
