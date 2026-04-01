@@ -165,6 +165,51 @@ jobs:
             --sarif --output semgrep.sarif \
             --error \
             --verbose
+      - name: Publish findings to job summary
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+          sarif_path = 'semgrep.sarif'
+          summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
+          try:
+              with open(sarif_path) as f:
+                  sarif = json.load(f)
+          except Exception:
+              open(summary, 'a').write('## Semgrep SAST\n\nNo SARIF output.\n')
+              raise SystemExit(0)
+          results = []
+          for run in sarif.get('runs', []):
+              for r in run.get('results', []):
+                  locs = r.get('locations', [{}])
+                  ploc = locs[0].get('physicalLocation', {}) if locs else {}
+                  results.append({
+                      'rule': r.get('ruleId', 'unknown'),
+                      'level': r.get('level', 'note'),
+                      'uri': ploc.get('artifactLocation', {}).get('uri', ''),
+                      'line': ploc.get('region', {}).get('startLine', '?'),
+                      'msg': r.get('message', {}).get('text', '')[:200],
+                  })
+          _LEVEL_ORDER = {'error': 0, 'warning': 1, 'note': 2, 'none': 3}
+          results.sort(key=lambda x: _LEVEL_ORDER.get(x['level'], 9))
+          with open(summary, 'a') as out:
+              out.write('## Semgrep SAST Findings\n\n')
+              if not results:
+                  out.write('No findings detected. \u2705\n')
+              else:
+                  out.write(f'**{len(results)} finding(s) detected.**\n\n')
+                  out.write('| Severity | Rule | File | Line |\n')
+                  out.write('|----------|------|------|------|\n')
+                  for r in results:
+                      out.write(
+                          f"| `{r['level']}` "
+                          f"| `{r['rule']}` "
+                          f"| `{r['uri']}` "
+                          f"| {r['line']} |\n"
+                      )
+                  out.write('\n> **Note:** Install GitHub Advanced Security to see '
+                            'inline annotations on the PR diff.\n')
+          PYEOF
       - name: Normalize SARIF severity for GitHub Code Scanning
         if: always()
         run: |
@@ -184,6 +229,7 @@ jobs:
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f  # v3
         if: always()
+        continue-on-error: true
         with:
           sarif_file: semgrep-fixed.sarif
           category: semgrep
