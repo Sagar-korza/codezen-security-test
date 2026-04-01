@@ -171,7 +171,7 @@ jobs:
           jq '
             .runs[].tool.rules[].properties
             |= if has("security-severity") then
-              .\"security-severity\" |= (
+              ."security-severity" |= (
                 if . == "critical" or . == "Critical" then "9.5"
                 elif . == "high" or . == "High" then "8.0"
                 elif . == "medium" or . == "Medium" then "5.0"
