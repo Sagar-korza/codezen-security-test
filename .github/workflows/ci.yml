@@ -168,11 +168,9 @@ jobs:
       - name: Normalize SARIF severity for GitHub Code Scanning
         if: always()
         run: |
-          jq '
-            .runs[].tool.rules[]?
-            |= if (.properties | type) == "object"
-               and (.properties | has("security-severity")) then
-              .properties."security-severity" |= (
+          jq 'walk(
+            if type == "object" and has("security-severity") then
+              .["security-severity"] |= (
                 if . == "critical" or . == "Critical" then "9.5"
                 elif . == "high" or . == "High" then "8.0"
                 elif . == "medium" or . == "Medium" then "5.0"
@@ -182,7 +180,7 @@ jobs:
                 end
               )
             else . end
-          ' semgrep.sarif > semgrep-fixed.sarif
+          )' semgrep.sarif > semgrep-fixed.sarif
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f  # v3
         if: always()
